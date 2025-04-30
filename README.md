@@ -1,8 +1,8 @@
 # PyPassGen
 
-![Version](https://img.shields.io/badge/version-1.3.0-green) | ![Python](https://img.shields.io/badge/python-3.8+-green) | ![Last Commit](https://img.shields.io/github/last-commit/cyberanchor/pypassgen) | ![Issues](https://img.shields.io/github/issues/cyberanchor/pypassgen)
+![Version](https://img.shields.io/badge/version-1.3.0-green)  ![Python](https://img.shields.io/badge/python-3.8+-green)  ![Last Commit](https://img.shields.io/github/last-commit/cyberanchor/pypassgen)  ![Issues](https://img.shields.io/github/issues/cyberanchor/pypassgen)
 
-**PyPassGen** generates deterministic passwords from BIP-39 mnemonic phrases or automatically creates mnemonic phrases and passwords. Ideal for secure password management with high entropy and determinism.
+**PyPassGen** generates deterministic passwords from BIP-39 mnemonic phrases or automatically creates mnemonic phrases and passwords.
 
 ## Features
 - **Mnemonic Generation**: Creates BIP-39 mnemonic phrases in multiple languages (English, French, Spanish, Italian, Japanese, Korean, Chinese Simplified).
@@ -11,7 +11,7 @@
 - **File Output**: Saves mnemonic phrases and passwords in a mnemonic-password format.
 - **Entropy Calculation**: Logs password entropy in bits to assess strength.
 - **Parallel Processing**: Uses multithreading for faster generation of multiple phrases.
-- **Security**: Validates inputs, clears sensitive data from memory, and provides detailed colorized logging.
+- **Security**: Validates inputs, clears sensitive data from memory, provides detailed logging.
 
 ## Cryptographic Architecture
 - **Mnemonic to Seed**: Converts BIP-39 mnemonics to a 512-bit seed using PBKDF2-HMAC-SHA512.
@@ -81,10 +81,10 @@ Entropy measures password strength in bits (`H = log2(N^C)`, N=88 characters). P
   - 16 characters: ~103.2 bits
   - 32 characters: ~206.7 bits
 - **Guidelines**:
-  - `< 64 bits`: Weak (avoid).
-  - `64–80 bits`: Minimum for basic security.
-  - `80–128 bits`: Good for most applications.
-  - `> 128 bits`: Excellent for high-security needs.
+  - `< 64 bits`: Weak
+  - `64–80 bits`: Minimum 
+  - `80–128 bits`: Good 
+  - `> 128 bits`: Excellent
 
 ## File Output Format
 With `--output <file>`, saves in this format:
