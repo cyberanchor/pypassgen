@@ -23,7 +23,7 @@
 ## Installation
 1. Clone the repository:
    ```bash
-   git clone https://github.com/xai/pypassgen.git
+   git clone https://github.com/cyberanchor/pypassgen
    cd pypassgen
    ```
 2. Install dependencies:
