@@ -5,20 +5,20 @@
 **PyPassGen** generates deterministic passwords from BIP-39 mnemonic phrases or automatically creates mnemonic phrases and passwords.
 
 ## Features
-- **Mnemonic Generation**: Creates BIP-39 mnemonic phrases in multiple languages (English, French, Spanish, Italian, Japanese, Korean, Chinese Simplified).
-- **Deterministic Passwords**: Generates consistent passwords using PBKDF2-HMAC-SHA512 with 1,000,000 iterations.
-- **Customizable**: Supports password lengths up to 1024 characters and up to 100 phrases in auto mode.
-- **File Output**: Saves mnemonic phrases and passwords in a mnemonic-password format.
-- **Entropy Calculation**: Logs password entropy in bits to assess strength.
-- **Parallel Processing**: Uses multithreading for faster generation of multiple phrases.
-- **Security**: Validates inputs, clears sensitive data from memory, provides detailed logging.
+- **Mnemonic generation**: creates BIP-39 mnemonic phrases in multiple languages (English, French, Spanish, Italian, Japanese, Korean, Chinese Simplified);
+- **Deterministic passwords**: generates consistent passwords using PBKDF2-HMAC-SHA512 with 1000000 iterations;
+- **Customizable**: supports password lengths up to 1024 characters and up to 100 phrases in auto mode;
+- **File output**: saves mnemonic phrases and passwords in a mnemonic-password format;
+- **Entropy calculation**: logs password entropy in bits to assess strength;
+- **Parallel processing**: uses multithreading for faster generation of multiple phrases;
+- **Security**: validates inputs, clears sensitive data from memory, provides detailed logging.
 
-## Cryptographic Architecture
-- **Mnemonic to Seed**: Converts BIP-39 mnemonics to a 512-bit seed using PBKDF2-HMAC-SHA512.
-- **Key Derivation**: Derives a key with PBKDF2-HMAC-SHA512, 1,000,000 iterations, and a fixed salt (`0`).
-- **Password Generation**: Maps a SHA-512 hash to an 88-character set (alphanumeric + symbols).
-- **Entropy**: Calculates entropy as `H = log2(N^C)` (N=88, C=length).
-- **Memory Safety**: Overwrites sensitive data after use.
+## Cryptographic architecture
+- **Mnemonic to seed**: converts BIP-39 mnemonics to a 512-bit seed using PBKDF2-HMAC-SHA512;
+- **Key derivation**: derives key with PBKDF2-HMAC-SHA512  1000000 iterations and a fixed salt (`0`);
+- **Password generation**: maps SHA-512 hash to 88-character set (alphanumeric + symbols);
+- **Entropy**: calculates entropy `H = log2(N^C)` (N=88, C=length);
+- **Memory safety**: overwrites sensitive data after use.
 
 ## Installation
 1. Clone the repository:
@@ -28,22 +28,22 @@
    ```
 2. Install dependencies:
    ```bash
-   pip install mnemonic colorama
+   pip install -r requirements.txt
    ```
-3. Run the tool:
+3. Run:
    ```bash
    python pypassgen.py --help
    ```
 
 ## Usage
-### Command-Line Arguments
-- `--mnemonic <phrase>`: BIP-39 mnemonic phrase for password generation.
-- `--auto`: Auto-generate mnemonic phrases and passwords.
-- `--phrases <N>`: Number of phrases (default: 1, max: 100).
-- `--words <N>`: Words per phrase (12, 15, 18, 21, 24; default: 12).
-- `--password-length <N>`: Password length (default: 12, max: 1024).
-- `--language <lang>`: Mnemonic language (default: english).
-- `--output <file>`: Save mnemonic phrases and passwords to a file.
+### Command-line arguments
+- `--mnemonic <phrase>`: BIP-39 mnemonic phrase for password generation;
+- `--auto`: auto-generate mnemonic phrases and passwords;
+- `--phrases <N>`: number of phrases (default: 1, max: 100);
+- `--words <N>`: words per phrase (12, 15, 18, 21, 24; default: 12);
+- `--password-length <N>`: password length (default: 12, max: 1024);
+- `--language <lang>`: mnemonic language (default: english);
+- `--output <file>`: save mnemonic phrases and passwords to a file.
 
 ### Examples
 1. Generate a password from a mnemonic:
@@ -52,7 +52,7 @@
    ```
    **Output**:
    ```
-   Generated Password: BsZwx:(36vBaSD^y
+   Generated password: BsZwx:(36vBaSD^y
    ```
 
 2. Auto-generate 3 phrases with 24 words and 32-character passwords:
@@ -74,7 +74,7 @@
    python pypassgen.py --auto --language french --password-length 20
    ```
 
-## Password Entropy
+## Password entropy
 Entropy measures password strength in bits (`H = log2(N^C)`, N=88 characters). PyPassGen logs entropy in DEBUG mode.
 - **Examples**:
   - 12 characters: ~77.4 bits
@@ -86,7 +86,7 @@ Entropy measures password strength in bits (`H = log2(N^C)`, N=88 characters). P
   - `80–128 bits`: Good 
   - `> 128 bits`: Excellent
 
-## File Output Format
+## File output format
 With `--output <file>`, saves in this format:
 ```
 mnemonic1
