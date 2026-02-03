@@ -2,7 +2,7 @@
 
 PyPassGen is a Python code that facilitates the generation of secure passwords from mnemonic phrases using BIP39 seed derivation and PBKDF2-HMAC-SHA512 key derivation. This code is designed to provide a reliable and efficient method for generating strong passwords based on mnemonic phrases, which are commonly used in cryptocurrency wallets and other secure applications.
 
-![running on linux](https://github.com/jumb0t/pypassgen/blob/main/screenshot.png)
+![running on linux](https://github.com/cyberanchor/pypassgen/blob/old_version/screenshot.png)
 
 
 ## Features
@@ -77,7 +77,7 @@ Adjust the `mnemonic_phrase`, `password_length`, and `use_symbols` parameters as
 
 This guide demonstrates how to install and run the PyPassGen Python library on an Android device using Termux. PyPassGen allows you to generate secure passwords from mnemonic phrases using BIP39 seed derivation and PBKDF2-HMAC-SHA512 key derivation.
 
-![running on android](https://github.com/jumb0t/pypassgen/blob/main/screenshot2.jpg)
+![running on android](https://github.com/cyberanchor/pypassgen/blob/old_version/screenshot2.jpg)
 
 
 ## Prerequisites
