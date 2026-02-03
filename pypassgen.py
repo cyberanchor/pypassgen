@@ -9,7 +9,7 @@ mnemonic phrases and their corresponding passwords.
 Key Features:
 - Generates BIP-39 mnemonic phrases in multiple languages (English, French, Spanish, etc.).
 - Produces deterministic passwords using PBKDF2-HMAC-SHA512 with 1,000,000 iterations.
-- Supports customizable password lengths (up to 1024 characters) and multilingual mnemonic phrases.
+- Supports customizable password lengths (up to 256 characters) and multilingual mnemonic phrases.
 - Saves generated mnemonic phrases and passwords to a file in mnemonic-password format.
 - Provides detailed, colorized logging with entropy calculation for passwords.
 - Implements parallel processing for efficient generation of multiple phrases.
@@ -40,8 +40,10 @@ Software Architecture:
 
 import argparse
 import hashlib
+import hmac
 import logging
 import math
+import struct
 import sys
 import time
 from typing import List, Tuple
@@ -50,22 +52,82 @@ from colorama import init, Fore, Style
 from mnemonic import Mnemonic
 from concurrent.futures import ThreadPoolExecutor
 
+
+USE_COLOR = sys.stdout.isatty()
+
+if USE_COLOR:
+    from colorama import Fore, Style
+    RESET_ALL = Style.RESET_ALL
+else:
+    class _NoColor:
+        def __getattr__(self, name):
+            return ""
+    Fore = _NoColor()
+    RESET_ALL = ""
+
+
+
+
 # Initialize colorama for cross-platform colored output
 init(autoreset=True)
 
 # Constants
 APP_NAME = "PyPassGen"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.5"
 DEFAULT_PASSWORD_LENGTH = 12
-MAX_PASSWORD_LENGTH = 512
+MAX_PASSWORD_LENGTH = 256
 DEFAULT_NUM_PHRASES = 1
 MAX_NUM_PHRASES = 100
+MAX_MNEMONIC_ONLY_COUNT = 10_000
+BIG_COUNT_REQUIRES_OUTPUT = 1_000  # Require --output when generating many mnemonics
 PBKDF2_ITERATIONS = 1_000_000
 BASE_CHARACTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 SYMBOLS = "!@#$%^&*()_+-=[]{};:,.<>?~"
 SUPPORTED_LANGUAGES = ["english", "french", "spanish", "italian", "japanese", "korean", "chinese_simplified"]
 STRENGTH_MAP = {12: 128, 15: 160, 18: 192, 21: 224, 24: 256}
 FIXED_SALT = b'0'
+
+
+# Password derivation helpers (v1.3.5+)
+_HMAC_DOMAIN = b"PyPassGen\x00"
+
+def _hmac_sha512_stream(key: bytes, context: bytes = b""):
+    """
+    Deterministic byte stream based on HMAC-SHA512(key, domain || context || counter).
+    Yields 64-byte blocks.
+    """
+    counter = 0
+    while True:
+        ctr = struct.pack(">I", counter)
+        yield hmac.new(key, _HMAC_DOMAIN + context + ctr, hashlib.sha512).digest()
+        counter += 1
+
+
+def _map_to_charset_uniform(charset: str, length: int, byte_blocks) -> str:
+    """
+    Map bytes to charset uniformly using rejection sampling (avoids modulo bias).
+    byte_blocks: iterator yielding bytes objects.
+    """
+    m = len(charset)
+    if m <= 0:
+        raise ValueError("Empty charset")
+    limit = (256 // m) * m  # largest multiple of m below 256
+
+    out = []
+    buf = b""
+    idx = 0
+
+    while len(out) < length:
+        if idx >= len(buf):
+            buf = next(byte_blocks)
+            idx = 0
+        b = buf[idx]
+        idx += 1
+        if b < limit:
+            out.append(charset[b % m])
+
+    return "".join(out)
+
 
 # Color scheme for output
 COLOR_SCHEME = {
@@ -103,15 +165,21 @@ class Config:
             Configured logger instance.
         """
         logger = logging.getLogger(APP_NAME)
-        logger.setLevel(logging.DEBUG)  # Enable DEBUG level for detailed logging
-        
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(logging.Formatter(
-            f"{Fore.BLUE}%(asctime)s{Style.RESET_ALL} - "
-            f"{Fore.CYAN}%(levelname)-8s{Style.RESET_ALL} - %(message)s"
-        ))
-        logger.addHandler(console_handler)
-        
+        # Default level is INFO; enable DEBUG with --verbose.
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+
+        # Avoid duplicate handlers if Config() is created multiple times (e.g., in imports/tests).
+        if not logger.handlers:
+            # Log to stderr so stdout can be safely piped/redirected for generated output.
+            console_handler = logging.StreamHandler(sys.stderr)
+            console_handler.setLevel(logging.INFO)
+            console_handler.setFormatter(logging.Formatter(
+                f"{Fore.BLUE}%(asctime)s{RESET_ALL} - "
+                f"{Fore.CYAN}%(levelname)-8s{RESET_ALL} - %(message)s"
+            ))
+            logger.addHandler(console_handler)
+
         return logger
 
 class MnemonicGenerator:
@@ -249,40 +317,37 @@ class PasswordGenerator:
             
             # Generate seed from mnemonic
             self.logger.debug(f"{COLOR_SCHEME['info']}Converting mnemonic to seed...")
-            seed = Mnemonic.to_seed(mnemonic)
+            seed_bytes = Mnemonic.to_seed(mnemonic)
+            seed = bytearray(seed_bytes)
             self.logger.debug(f"{COLOR_SCHEME['info']}Seed generated, size: {len(seed)} bytes")
-            
+
             # Derive secure key with PBKDF2
             self.logger.debug(
                 f"{COLOR_SCHEME['info']}Deriving key with PBKDF2-HMAC-SHA512, "
                 f"{PBKDF2_ITERATIONS} iterations..."
             )
-            key = hashlib.pbkdf2_hmac(
-                'sha512', seed, self.config.salt, PBKDF2_ITERATIONS
+            key_bytes = hashlib.pbkdf2_hmac(
+                'sha512', bytes(seed), self.config.salt, PBKDF2_ITERATIONS
             )
+            key = bytearray(key_bytes)
             self.logger.debug(f"{COLOR_SCHEME['info']}Key derived, size: {len(key)} bytes")
-            
-            # Generate deterministic password from single SHA-512 hash
-            self.logger.debug(f"{COLOR_SCHEME['info']}Generating SHA-512 hash for password...")
-            hash_bytes = hashlib.sha512(key).digest()
-            self.logger.debug(f"{COLOR_SCHEME['info']}Hash generated, size: {len(hash_bytes)} bytes")
-            
-            password = []
-            for i in range(password_length):
-                index = hash_bytes[i % len(hash_bytes)] % len(characters)
-                password.append(characters[index])
-            
-            # Calculate password entropy
+
+            # Generate deterministic password from an HMAC-SHA512 byte stream (no repetition after 64 chars)
+            self.logger.debug(f"{COLOR_SCHEME['info']}Generating password using HMAC-SHA512 stream + rejection sampling...")
+            characters = BASE_CHARACTERS + SYMBOLS
+            byte_blocks = _hmac_sha512_stream(bytes(key))
+            password_str = _map_to_charset_uniform(characters, password_length, byte_blocks)
+
+            # Calculate password entropy (uniform charset mapping)
             entropy = password_length * math.log2(len(characters))
-            self.logger.debug(f"{COLOR_SCHEME['info']}Password entropy: {entropy:.2f} bits")
-            
-            # Clear sensitive data
-            self.logger.debug(f"{COLOR_SCHEME['info']}Clearing sensitive data from memory...")
-            seed = b'\x00' * len(seed)
-            key = b'\x00' * len(key)
-            hash_bytes = b'\x00' * len(hash_bytes)
-            
-            password_str = ''.join(password)
+            self.logger.debug(f"{COLOR_SCHEME['info']}Password entropy (upper bound): {entropy:.2f} bits")
+
+            # Clear sensitive data from memory (best-effort; Python may keep copies internally)
+            self.logger.debug(f"{COLOR_SCHEME['info']}Clearing sensitive data from memory (best-effort)...")
+            for i in range(len(seed)):
+                seed[i] = 0
+            for i in range(len(key)):
+                key[i] = 0
             end_time = time.time()
             
             self.logger.info(
@@ -317,34 +382,35 @@ class CLIHandler:
             Parsed arguments.
         """
         parser = argparse.ArgumentParser(
-            description=(
-                f"{COLOR_SCHEME['highlight']}{APP_NAME} v{APP_VERSION}\n"
-                "Generate deterministic passwords from BIP-39 mnemonic phrases or "
-                "automatically generate mnemonic phrases and passwords.\n\n"
-                "Cryptographic Details:\n"
-                "- Uses PBKDF2-HMAC-SHA512 with 1,000,000 iterations for key derivation.\n"
-                "- Fixed salt ensures deterministic output for the same mnemonic.\n"
-                "- Sensitive data is cleared from memory after use.\n"
-                "- Calculates password entropy for strength assessment."
-            ),
+            usage=argparse.SUPPRESS,
+            description=" ____        ____                 ____            \n|  _ \\ _   _|  _ \\ __ _ ___ ___  / ___| ___ _ __  \n| |_) | | | | |_) / _` / __/ __| | |  _ / _ \\ '_ \\ \n|  __/| |_| |  __/ (_| \\__ \\__ \\ | |_| |  __/ | | |\n|_|    \\__, |_|   \\__,_|___/___/  \\____|\\___|_| |_|  v1.3.5\n       |___/                                        \n\nGenerate deterministic passwords from BIP-39 mnemonic phrases, or generate new mnemonics.\n\nCryptography:\n- BIP-39 mnemonic generation/validation (wordlists depend on --language)\n- Password derivation: PBKDF2-HMAC-SHA512 (1,000,000 iterations) + deterministic fixed salt",
             formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog=(
-                f"{COLOR_SCHEME['info']}Examples:\n"
-                "  Generate password from mnemonic:\n"
-                f"    python {sys.argv[0]} --mnemonic 'word1 word2 ...' --password-length 16\n"
-                "  Auto-generate 3 mnemonic phrases and passwords:\n"
-                f"    python {sys.argv[0]} --auto --phrases 3 --output phrases.txt\n"
-                f"{COLOR_SCHEME['warning']}Note: Ensure mnemonic phrases are BIP-39 compliant."
-            )
+            epilog='Examples (syntax + real commands)\n\n1) Show help\n   python pypassgen.py -h\n\n2) Generate a deterministic password from an existing mnemonic\n   python pypassgen.py --mnemonic "word1 word2 ... word12" --password-length 16\n   python pypassgen.py --mnemonic "..." --password-length 32 --language english\n\n3) Auto-generate mnemonics AND passwords (pairs)\n   # 3 phrases, 12 words each, English (default), save to file\n   python pypassgen.py --auto-gen --phrases 3 --words 12 --output phrases.txt\n   # 5 phrases, 24 words each, Italian\n   python pypassgen.py --auto-gen --phrases 5 --words 24 --language italian --output phrases_it.txt\n\n4) Generate ONLY mnemonics (no passwords)\n   # default: 1 mnemonic, 12 words, English, stdout (one mnemonic per line)\n   python pypassgen.py --mnemonic-only\n   # 200 mnemonics, 24 words, French, stdout\n   python pypassgen.py --mnemonic-only --count 200 --words 24 --language french\n   # Large batches: output file required when --count > 1000\n   python pypassgen.py --mnemonic-only --count 5000 --words 24 --output mnemonics_24w.txt\n\nNotes\n- Limits: --phrases max 100 (for --auto-gen); --count max 10000 (for --mnemonic-only)\n- Languages are restricted to SUPPORTED_LANGUAGES (see --help choices)'
         )
-        
+
+        # Keep a reference so we can print help from other parts of the program.
+        self._parser = parser
+
         parser.add_argument(
             "--mnemonic", type=str,
             help=f"{COLOR_SCHEME['info']}BIP-39 mnemonic phrase to generate password from"
         )
         parser.add_argument(
-            "--auto", action="store_true",
-            help=f"{COLOR_SCHEME['info']}Automatically generate mnemonic phrases and passwords"
+            "--auto-gen", dest="auto_gen", action="store_true",
+            help=f"{COLOR_SCHEME['info']}Auto-generate mnemonic phrases and passwords (pairs)"
+        )
+        # Backwards-compatible alias (hidden from --help).
+        parser.add_argument(
+            "--auto", dest="auto_gen", action="store_true", help=argparse.SUPPRESS
+        )
+        parser.add_argument(
+            "--mnemonic-only", action="store_true",
+            help=f"{COLOR_SCHEME['info']}Generate only BIP-39 mnemonics (no passwords)"
+        )
+        parser.add_argument(
+            "--count", type=int, default=None,
+            help=f"{COLOR_SCHEME['info']}Number of mnemonics to generate (default: 1, max: {MAX_MNEMONIC_ONLY_COUNT}). "
+                 f"If set, overrides --phrases for --mnemonic-only"
         )
         parser.add_argument(
             "--phrases", type=int, default=DEFAULT_NUM_PHRASES,
@@ -363,12 +429,38 @@ class CLIHandler:
             help=f"{COLOR_SCHEME['info']}Language for mnemonic phrases (default: english)"
         )
         parser.add_argument(
+            "-v", "--verbose", action="store_true",
+            help=f"{COLOR_SCHEME['info']}Enable verbose (DEBUG) logging to stderr"
+        )
+        parser.add_argument(
             "--output", type=str,
             help=f"{COLOR_SCHEME['info']}File to save generated mnemonic phrases and passwords"
         )
         
+        # If started with no arguments, show help and exit cleanly.
+        if len(sys.argv) == 1:
+            parser.print_help()
+            raise SystemExit(0)
+
         args = parser.parse_args()
-        self.logger.debug(f"{COLOR_SCHEME['info']}Parsed arguments: {vars(args)}")
+
+        # If invoked with only -v/--verbose, behave like "show help".
+        if getattr(args, "verbose", False) and len(sys.argv) == 2:
+            parser.print_help()
+            raise SystemExit(0)
+
+        # Logging: keep stdout clean for generated output; logs go to stderr.
+        # Default is INFO; enable DEBUG with --verbose.
+        if getattr(args, "verbose", False):
+            self.logger.setLevel(logging.DEBUG)
+            for h in self.logger.handlers:
+                h.setLevel(logging.DEBUG)
+            self.logger.debug(f"{COLOR_SCHEME['info']}Parsed arguments: {vars(args)}")
+        else:
+            self.logger.setLevel(logging.INFO)
+            for h in self.logger.handlers:
+                h.setLevel(logging.INFO)
+
         return args
 
     def save_to_file(self, phrases: List[Tuple[str, str]], output_file: str) -> None:
@@ -426,28 +518,33 @@ class CLIHandler:
             self.logger.info(
                 f"{COLOR_SCHEME['highlight']}{APP_NAME} v{APP_VERSION} starting..."
             )
+
+            self.logger.warning(
+                f"{COLOR_SCHEME['warning']}Compatibility notice: v1.3.5 changes the password derivation algorithm. "\
+                f"Passwords generated by <=1.3.3 will NOT match for the same mnemonic."
+            )
             
             self.mnemonic_generator = MnemonicGenerator(args.language)
             self.password_generator = PasswordGenerator(self.config, args.language)
             
-            if args.auto and args.mnemonic:
+            # Validate argument combinations
+            if args.mnemonic and (args.auto_gen or args.mnemonic_only):
                 self.logger.error(
-                    f"{COLOR_SCHEME['error']}Cannot use --auto and --mnemonic together"
+                    f"{COLOR_SCHEME['error']}Cannot use --mnemonic together with --auto-gen/--mnemonic-only"
                 )
-                raise PyPassGenError("Invalid argument combination: --auto and --mnemonic")
-
-            if args.phrases <= 0:
+                raise PyPassGenError("Cannot use --mnemonic together with --auto-gen/--mnemonic-only")
                 self.logger.error(
-                    f"{COLOR_SCHEME['error']}Number of phrases must be positive: {args.phrases}"
+                    f"{COLOR_SCHEME['error']}Cannot use --mnemonic together with --auto-gen/--mnemonic-only"
                 )
-                raise PyPassGenError("Number of phrases must be positive")
+                raise PyPassGenError("Invalid argument combination")
 
-            if args.auto and args.phrases > MAX_NUM_PHRASES:
+            if args.auto_gen and args.mnemonic_only:
                 self.logger.error(
-                    f"{COLOR_SCHEME['error']}Number of phrases exceeds maximum: {args.phrases} > {MAX_NUM_PHRASES}"
+                    f"{COLOR_SCHEME['error']}Cannot use --auto-gen and --mnemonic-only together"
                 )
-                raise PyPassGenError(f"Number of phrases exceeds maximum: {MAX_NUM_PHRASES}")
+                raise PyPassGenError("Invalid argument combination")
 
+            # --- Mode 1: password from provided mnemonic ---
             if args.mnemonic:
                 self.logger.info(f"{COLOR_SCHEME['info']}Processing provided mnemonic...")
                 password = self.password_generator.generate(
@@ -455,11 +552,81 @@ class CLIHandler:
                 )
                 print(
                     f"{COLOR_SCHEME['success']}Generated Password: "
-                    f"{COLOR_SCHEME['highlight']}{password}{Style.RESET_ALL}"
+                    f"{COLOR_SCHEME['highlight']}{password}{RESET_ALL}"
                 )
-            else:
-                self.logger.info(f"{COLOR_SCHEME['info']}Generating {args.phrases} mnemonic phrases in parallel...")
-                phrases = []
+                return
+
+            # --- Mode 2: mnemonics only ---
+            if args.mnemonic_only:
+                # count defaults to 1; --count overrides (and for backwards-compatibility we also accept --phrases)
+                count = args.count if args.count is not None else args.phrases
+                if count <= 0:
+                    raise PyPassGenError("--count must be positive")
+                if count > MAX_MNEMONIC_ONLY_COUNT:
+                    raise PyPassGenError(f"--count is too large (max: {MAX_MNEMONIC_ONLY_COUNT})")
+                if count > BIG_COUNT_REQUIRES_OUTPUT and not args.output:
+                    raise PyPassGenError(
+                        f"For large volumes (>{BIG_COUNT_REQUIRES_OUTPUT}), --output is required"
+                    )
+
+                # Output: one mnemonic per line, no extra labels.
+                if args.output:
+                    self.logger.info(f"{COLOR_SCHEME['info']}Generating {count} mnemonics -> {args.output}")
+                    try:
+                        with open(args.output, "w", encoding="utf-8", buffering=1024 * 1024) as f:
+                            for _ in range(count):
+                                m = self.mnemonic_generator.generate(args.words)
+                                if not self.mnemonic_generator.validate(m):
+                                    raise PyPassGenError("Generated mnemonic failed validation")
+                                f.write(m + "\n")
+                    except OSError as e:
+                        raise PyPassGenError(f"Cannot write to --output '{args.output}': {e}")
+                    return
+                else:
+                    self.logger.info(f"{COLOR_SCHEME['info']}Generating {count} mnemonics to stdout")
+                    for _ in range(count):
+                        m = self.mnemonic_generator.generate(args.words)
+                        if not self.mnemonic_generator.validate(m):
+                            raise PyPassGenError("Generated mnemonic failed validation")
+                        print(m)
+                    return
+
+            # --- Mode 3: auto-generate mnemonic + password pairs ---
+            if not args.auto_gen:
+                # UX: show help if the user did not select a mode.
+                try:
+                    self._parser.print_help()
+                except Exception:
+                    pass
+
+                # Special case: running only with -v/--verbose should behave like "show help".
+                if getattr(args, "verbose", False) and len(sys.argv) == 2:
+                    return
+
+                self.logger.error(
+                    f"{COLOR_SCHEME['error']}No mode selected. Use --mnemonic, --mnemonic-only, or --auto-gen."
+                )
+                raise PyPassGenError("No mode selected")
+
+            if args.phrases <= 0:
+                self.logger.error(
+                    f"{COLOR_SCHEME['error']}Number of phrases must be positive: {args.phrases}"
+                )
+                raise PyPassGenError("Number of phrases must be positive")
+
+            if args.phrases > MAX_NUM_PHRASES:
+                self.logger.error(
+                    f"{COLOR_SCHEME['error']}Number of phrases exceeds maximum: {args.phrases} > {MAX_NUM_PHRASES}"
+                )
+                raise PyPassGenError(f"Number of phrases exceeds maximum: {MAX_NUM_PHRASES}")
+
+            self.logger.info(f"{COLOR_SCHEME['info']}Generating {args.phrases} mnemonic phrases in parallel...")
+            file_handle = None
+            if args.output:
+                # overwrite existing file for a clean run
+                file_handle = open(args.output, "w", encoding="utf-8", buffering=1024 * 1024)
+
+            try:
                 with ThreadPoolExecutor() as executor:
                     futures = [
                         executor.submit(self.generate_phrase, args.words, args.password_length)
@@ -467,20 +634,17 @@ class CLIHandler:
                     ]
                     for i, future in enumerate(futures, 1):
                         mnemonic, password = future.result()
-                        phrases.append((mnemonic, password))
-                        self.logger.debug(f"{COLOR_SCHEME['info']}Generated phrase {i}/{args.phrases}")
-                
-                for i, (mnemonic, password) in enumerate(phrases, 1):
-                    print(
-                        f"{COLOR_SCHEME['success']}Mnemonic {i}: "
-                        f"{COLOR_SCHEME['highlight']}{mnemonic}\n"
-                        f"{COLOR_SCHEME['success']}Password {i}: "
-                        f"{COLOR_SCHEME['highlight']}{password}{Style.RESET_ALL}\n"
-                    )
-                
-                if args.output:
-                    self.save_to_file(phrases, args.output)
-                    
+                        print(
+                            f"{COLOR_SCHEME['success']}Mnemonic {i}: "
+                            f"{COLOR_SCHEME['highlight']}{mnemonic}\n"
+                            f"{COLOR_SCHEME['success']}Password {i}: "
+                            f"{COLOR_SCHEME['highlight']}{password}{RESET_ALL}\n"
+                        )
+                        if file_handle:
+                            file_handle.write(mnemonic + "\n" + password + "\n")
+            finally:
+                if file_handle:
+                    file_handle.close()
         except PyPassGenError as e:
             self.logger.error(f"{COLOR_SCHEME['error']}{str(e)}")
             sys.exit(1)
@@ -501,3 +665,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Enable colors only when stdout is a TTY (prevents ANSI codes in redirected output)
+USE_COLOR = sys.stdout.isatty()
+RESET_ALL = RESET_ALL if USE_COLOR else ""
+if not USE_COLOR:
+    COLOR_SCHEME = {k: "" for k in COLOR_SCHEME}
+
